@@ -62,25 +62,54 @@ async function notifyAllTabsPrefsChanged() {
     }
 }
 
-// Helper: batched reload for suspended tabs to refresh favicons CPU-friendly
-async function reloadSuspendedTabsBatched(tabs, batchSize = 10, perTabDelayMs = 200, batchDelayMs = 1200) {
+// Optimized batched reload for suspended tabs with controlled concurrency
+async function reloadSuspendedTabsBatched(tabs, batchSize = 3, perTabDelayMs = 1000, batchDelayMs = 1200) {
     const total = tabs.length;
     let processed = 0;
-    for (let i = 0; i < total; i += batchSize) {
-        const batch = tabs.slice(i, i + batchSize);
-        for (const tab of batch) {
-            if (tab.id) {
-                try { await chrome.tabs.reload(tab.id, { bypassCache: true }); } catch { }
-                processed++;
-                if (perTabDelayMs > 0) {
-                    await new Promise(r => setTimeout(r, perTabDelayMs));
+    let errors = 0;
+    const startTime = Date.now();
+
+    // Filter valid tabs upfront
+    const validTabs = tabs.filter(tab => tab.id && typeof tab.id === 'number');
+    Logger.log(`Favicon refresh: Processing ${validTabs.length} valid tabs out of ${total} total tabs`, Logger.LogComponent.BACKGROUND);
+
+
+
+    for (let i = 0; i < validTabs.length; i += batchSize) {
+        const batch = validTabs.slice(i, i + batchSize);
+
+        // Process batch concurrently with controlled delays
+        const batchPromises = batch.map(async (tab, index) => {
+            try {
+                // Stagger requests within batch to avoid overwhelming the system
+                if (index > 0 && perTabDelayMs > 0) {
+                    await new Promise(r => setTimeout(r, perTabDelayMs * index / batch.length));
                 }
+
+                await chrome.tabs.reload(tab.id, { bypassCache: true });
+                processed++;
+            } catch (e) {
+                errors++;
+                Logger.logError(`Favicon refresh failed for tab ${tab.id}`, e, Logger.LogComponent.BACKGROUND);
             }
-        }
-        if (i + batchSize < total && batchDelayMs > 0) {
+        });
+
+        // Wait for batch to complete
+        await Promise.allSettled(batchPromises);
+
+        // Inter-batch delay for system resources
+        if (i + batchSize < validTabs.length && batchDelayMs > 0) {
             await new Promise(r => setTimeout(r, batchDelayMs));
         }
+
+        // Progress logging
+        const progress = Math.round(((i + batch.length) / validTabs.length) * 100);
+        Logger.log(`Favicon refresh progress: ${progress}% (${processed} processed, ${errors} errors)`, Logger.LogComponent.BACKGROUND);
     }
+
+    const duration = Date.now() - startTime;
+    Logger.log(`Favicon refresh completed: ${processed} processed, ${errors} errors in ${duration}ms`, Logger.LogComponent.BACKGROUND);
+
     return processed;
 }
 
@@ -316,10 +345,7 @@ function handleMessage(request, sender, sendResponse) {
                     broadcastFaviconRefreshProgress(true);
                     const suspendedPrefix = chrome.runtime.getURL(Const.SUSPENDED_PAGE_PATH);
                     const tabs = await chrome.tabs.query({ url: suspendedPrefix + '*' });
-                    const batchSize = Number.isFinite(request?.batchSize) ? request.batchSize : 10;
-                    const perTabDelayMs = Number.isFinite(request?.perTabDelayMs) ? request.perTabDelayMs : 200;
-                    const batchDelayMs = Number.isFinite(request?.batchDelayMs) ? request.batchDelayMs : 1200;
-                    const count = await reloadSuspendedTabsBatched(tabs, batchSize, perTabDelayMs, batchDelayMs);
+                    const count = await reloadSuspendedTabsBatched(tabs);
                     globalThis.isFaviconRefreshRunning = false;
                     broadcastFaviconRefreshProgress(false);
                     return { success: true, count, total: tabs.length };

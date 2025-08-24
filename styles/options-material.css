@@ -1294,6 +1294,15 @@
     display: none !important;
 }
 
+/* Special URL section visibility classes */
+.special-url-section.visible {
+    display: block !important;
+}
+
+.special-url-content.visible {
+    display: block !important;
+}
+
 /* Sessions table */
 .sessions-table {
     width: 100%;
@@ -1728,4 +1737,92 @@
 .skipped-tab-reason {
     font-size: 12px;
     color: #b71c1c;
+}
+
+/* ================================================ */
+/* SPECIAL URL SECTION STYLES */
+/* ================================================ */
+
+.special-url-section {
+    margin-bottom: 20px;
+    border: 1px solid var(--md-sys-color-outline-variant);
+    border-radius: 12px;
+    overflow: hidden;
+}
+
+.special-url-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 0px 20px;
+    background: var(--md-sys-color-surface-container-low);
+    border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.special-url-header h4 {
+    margin: 0;
+    color: var(--md-sys-color-on-surface);
+}
+
+#toggle-special-url {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 14px;
+    color: var(--md-sys-color-primary);
+}
+
+.toggle-icon {
+    font-size: 12px;
+    transition: transform 0.2s ease;
+}
+
+.special-url-content {
+    padding: 0;
+    background: var(--md-sys-color-surface);
+}
+
+.special-url-list {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.special-url-tab {
+    border-left: 4px solid var(--md-sys-color-tertiary);
+    margin: 0;
+    border-radius: 0;
+    border-top: none;
+    border-right: none;
+    border-bottom: 1px solid var(--md-sys-color-outline-variant);
+}
+
+.special-url-tab:last-child {
+    border-bottom: none;
+}
+
+.special-url-tab .skipped-tab-reason {
+    color: var(--md-sys-color-tertiary);
+    font-weight: 600;
+}
+
+/* Animation for toggle */
+.special-url-content {
+    transition: all 0.3s ease;
+}
+
+/* Mobile responsiveness */
+@media (max-width: 768px) {
+    .special-url-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 12px;
+    }
+
+    .special-url-header h2 {
+        font-size: 18px;
+    }
+
+    #toggle-special-url {
+        align-self: flex-end;
+    }
 }

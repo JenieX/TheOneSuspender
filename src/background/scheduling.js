@@ -135,6 +135,148 @@ export async function setupTabScanAlarm() {
 }
 
 /**
+ * Process a batch of tabs concurrently with controlled concurrency
+ * @param {chrome.tabs.Tab[]} batch - Batch of tabs to process
+ * @param {number} now - Current timestamp
+ * @param {Object} globalStats - Global stats object for cleanup tracking
+ * @returns {Promise<{scanned: number, suspended: number, errors: number}>}
+ */
+async function processBatchConcurrently(batch, now, globalStats) {
+	const batchStats = { scanned: 0, suspended: 0, errors: 0 };
+	const maxConcurrency = 5; // Limit concurrent operations
+
+	// Create semaphore for concurrency control
+	let activeOperations = 0;
+	const processTab = async (tab) => {
+		batchStats.scanned++;
+		if (!tab.id) return;
+
+		try {
+			const suspendData = tabSuspendTimes.get(tab.id);
+			if (!suspendData) return;
+
+			const suspendTime = typeof suspendData === 'number'
+				? suspendData
+				: suspendData.scheduledTime;
+
+			if (suspendTime <= now) {
+				// Check if we should skip this tab
+				const skipReason = await Suspension.shouldSkipTabForScheduling(tab, true);
+				if (skipReason) {
+					Logger.detailedLog(`Tab ${tab.id} will not be suspended: ${skipReason}`);
+					tabSuspendTimes.delete(tab.id);
+					return;
+				}
+
+				// Suspend the tab
+				Logger.log(`Tab ${tab.id} has reached its suspension time, suspending...`);
+				const success = await Suspension.suspendTab(tab.id);
+				if (success) {
+					batchStats.suspended++;
+					tabSuspendTimes.delete(tab.id);
+				} else {
+					batchStats.errors++;
+				}
+			}
+		} catch (e) {
+			batchStats.errors++;
+			Logger.logError(`Error processing tab ${tab.id} during scan:`, e);
+		}
+	};
+
+	// Process tabs with controlled concurrency
+	const tabPromises = batch.map(async (tab) => {
+		// Wait for available slot
+		while (activeOperations >= maxConcurrency) {
+			await new Promise(resolve => setTimeout(resolve, 10));
+		}
+
+		activeOperations++;
+		try {
+			await processTab(tab);
+		} finally {
+			activeOperations--;
+		}
+	});
+
+	// Wait for all tabs in batch to complete
+	await Promise.allSettled(tabPromises);
+
+	// Persist changes after successful batch
+	if (batchStats.suspended > 0) {
+		persistSchedulesDebounced();
+	}
+
+	return batchStats;
+}
+
+/**
+ * Process a scheduling batch concurrently with controlled concurrency
+ * @param {chrome.tabs.Tab[]} batch - Batch of tabs to schedule
+ * @param {number} focusedWindowActiveTabId - Active tab ID in focused window
+ * @param {number[]} activeTabIds - Array of active tab IDs
+ * @param {number} maxConcurrency - Maximum concurrent operations
+ * @returns {Promise<{success: number, skipped: number, failed: number}>}
+ */
+async function processSchedulingBatchConcurrently(batch, focusedWindowActiveTabId, activeTabIds, maxConcurrency) {
+	const batchStats = { success: 0, skipped: 0, failed: 0 };
+
+	// Create semaphore for concurrency control
+	const semaphore = new Array(maxConcurrency).fill(null).map(() => Promise.resolve());
+	let semaphoreIndex = 0;
+
+	const processTab = async (tab) => {
+		if (!tab.id) {
+			batchStats.skipped++;
+			return;
+		}
+
+		try {
+			// Check if tab should be skipped for other reasons
+			const skipReason = await Suspension.shouldSkipTabForScheduling(tab, true);
+			if (skipReason) {
+				await cancelTabSuspendTracking(tab.id);
+				batchStats.skipped++;
+				Logger.detailedLog(`Tab ${tab.id} scheduling skipped: ${skipReason}`);
+				return;
+			}
+
+			// Schedule the tab
+			const scheduled = await scheduleTab(tab.id, tab);
+			if (scheduled) {
+				batchStats.success++;
+			} else {
+				batchStats.failed++;
+			}
+		} catch (e) {
+			batchStats.failed++;
+			Logger.logError(`Error batch scheduling tab ${tab.id}:`, e);
+		}
+	};
+
+	// Process tabs with controlled concurrency using semaphore
+	const tabPromises = batch.map(async (tab) => {
+		// Wait for next available semaphore slot
+		const currentIndex = semaphoreIndex;
+		semaphoreIndex = (semaphoreIndex + 1) % maxConcurrency;
+
+		await semaphore[currentIndex];
+
+		// Create new promise for this slot
+		semaphore[currentIndex] = processTab(tab).catch(e => {
+			Logger.logError(`Semaphore error for tab ${tab.id}:`, e);
+		});
+
+		return semaphore[currentIndex];
+	});
+
+	// Wait for all tabs in batch to complete
+	await Promise.allSettled(tabPromises);
+
+	return batchStats;
+}
+
+/**
  * Scans all tabs and suspends those that have reached their suspension time.
  * This is called by the tab scan alarm.
  * @returns {Promise<{ scanned: number, suspended: number, errors: number, cleaned: number }>} Stats about the scan operation.
@@ -167,42 +309,19 @@ export async function scanTabsForSuspension() {
 
 		State.updateOfflineStatus();
 
+		// Process tabs in optimized concurrent batches
 		for (let i = 0; i < tabs.length; i += Const.MAX_TABS_PER_SCAN) {
 			const batch = tabs.slice(i, i + Const.MAX_TABS_PER_SCAN);
 
-			for (const tab of batch) {
-				stats.scanned++;
-				if (!tab.id) continue;
+			// Process batch concurrently with controlled concurrency
+			const batchResults = await processBatchConcurrently(batch, now, stats);
 
-				try {
-					const suspendData = tabSuspendTimes.get(tab.id);
-					if (!suspendData) continue;
-					const suspendTime = typeof suspendData === 'number'
-						? suspendData
-						: suspendData.scheduledTime;
-					if (suspendTime <= now) {
-						const skipReason = await Suspension.shouldSkipTabForScheduling(tab, true);
-						if (skipReason) {
-							Logger.detailedLog(`Tab ${tab.id} will not be suspended: ${skipReason}`);
-							tabSuspendTimes.delete(tab.id);
-							continue;
-						}
-						Logger.log(`Tab ${tab.id} has reached its suspension time, suspending...`);
-						const success = await Suspension.suspendTab(tab.id);
-						if (success) {
-							stats.suspended++;
-							tabSuspendTimes.delete(tab.id);
-							persistSchedulesDebounced();
-						} else {
-							stats.errors++;
-						}
-					}
-				} catch (e) {
-					stats.errors++;
-					Logger.logError(`Error processing tab ${tab.id} during scan:`, e);
-				}
-			}
+			// Update stats from batch results
+			stats.scanned += batchResults.scanned;
+			stats.suspended += batchResults.suspended;
+			stats.errors += batchResults.errors;
 
+			// Inter-batch delay for system resources
 			if (i + Const.MAX_TABS_PER_SCAN < tabs.length) {
 				await new Promise(resolve => setTimeout(resolve, SMALL_DELAY_MS));
 			}
@@ -413,44 +532,25 @@ export async function scheduleAllTabs() {
 		stats.total = tabs.length;
 
 		const batchSize = 200;
+		const maxConcurrency = 5; // Higher concurrency for scheduling (less intensive than suspension)
 
 		for (let i = 0; i < tabs.length; i += batchSize) {
 			const batch = tabs.slice(i, Math.min(i + batchSize, tabs.length));
 
-			await Promise.all(batch.map(async (tab) => {
-				if (!tab.id) {
-					stats.skipped++;
-					return;
-				}
+			// Process batch with controlled concurrency
+			const batchResults = await processSchedulingBatchConcurrently(
+				batch,
+				focusedWindowActiveTabId,
+				activeTabIds,
+				maxConcurrency
+			);
 
-				try {
-					if ((Prefs.prefs.neverSuspendLastWindow && tab.id === focusedWindowActiveTabId) ||
-						(Prefs.prefs.neverSuspendActive && activeTabIds.includes(tab.id))) {
-						await cancelTabSuspendTracking(tab.id);
-						stats.skipped++;
-						Logger.detailedLog(`Tab ${tab.id} scheduling skipped: active tab protected by preferences`);
-					} else {
-						const skipReason = await Suspension.shouldSkipTabForScheduling(tab, true);
+			// Aggregate batch results
+			stats.success += batchResults.success;
+			stats.skipped += batchResults.skipped;
+			stats.failed += batchResults.failed;
 
-						if (skipReason) {
-							await cancelTabSuspendTracking(tab.id);
-							stats.skipped++;
-							Logger.detailedLog(`Tab ${tab.id} scheduling skipped: ${skipReason}`);
-						} else {
-							const scheduled = await scheduleTab(tab.id, tab);
-							if (scheduled) {
-								stats.success++;
-							} else {
-								stats.failed++;
-							}
-						}
-					}
-				} catch (e) {
-					stats.failed++;
-					Logger.logError(`Error batch scheduling tab ${tab.id}:`, e);
-				}
-			}));
-
+			// Inter-batch delay for system resources
 			if (i + batchSize < tabs.length) {
 				await new Promise(resolve => setTimeout(resolve, SMALL_DELAY_MS));
 			}

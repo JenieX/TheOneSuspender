@@ -255,41 +255,64 @@ export async function unsuspendTab(tabId) {
 }
 
 /**
- * Processes tab operations with a concurrency pool (queue) of up to N tabs at a time.
- * For each tab, just runs the operation; does not wait for loading or status.
+ * Optimized batch processing with better error handling and performance monitoring
  * @param {Array<number>} tabIds - Array of tab IDs to process.
  * @param {Function} op - Async function(tabId) => Promise<boolean> to run on each tab.
  * @param {number} concurrency - Max number of tabs to process at once.
- * @returns {Promise<{success: number, skipped: number}>}
+ * @param {string} operationName - Name for logging/monitoring
+ * @returns {Promise<{success: number, skipped: number, errors: number, duration: number}>}
  */
-async function processTabsWithConcurrency(tabIds, op, concurrency = 5) {
+async function processTabsWithConcurrency(tabIds, op, concurrency = 5, operationName = 'TabOperation') {
+    const startTime = Date.now();
     let success = 0;
     let skipped = 0;
-    let idx = 0;
-    const total = tabIds.length;
-    const next = () => idx < total ? tabIds[idx++] : null;
-    const promises = [];
-    async function worker() {
-        while (true) {
-            const tabId = next();
-            if (tabId === null) break;
-            try {
-                const didProcess = await op(tabId);
-                if (didProcess) {
-                    success++;
-                } else {
-                    skipped++;
-                }
-            } catch (e) {
+    let errors = 0;
+
+    // Filter out invalid tab IDs upfront
+    const validTabIds = tabIds.filter(id => typeof id === 'number' && id > 0);
+    if (validTabIds.length === 0) {
+        return { success: 0, skipped: 0, errors: 0, duration: 0 };
+    }
+
+    // Create semaphore for controlled concurrency
+    const semaphore = new Array(concurrency).fill(null).map(() => Promise.resolve());
+    let semaphoreIndex = 0;
+
+    const processTab = async (tabId) => {
+        try {
+            const result = await op(tabId);
+            if (result) {
+                success++;
+            } else {
                 skipped++;
             }
+        } catch (e) {
+            errors++;
+            Logger.logError(`${operationName} failed for tab ${tabId}`, e, Logger.LogComponent.SUSPENSION);
         }
-    }
-    for (let i = 0; i < concurrency; i++) {
-        promises.push(worker());
-    }
-    await Promise.all(promises);
-    return { success, skipped };
+    };
+
+    // Process all tabs with controlled concurrency
+    const tabPromises = validTabIds.map(async (tabId) => {
+        // Get next available semaphore slot
+        const currentIndex = semaphoreIndex;
+        semaphoreIndex = (semaphoreIndex + 1) % concurrency;
+
+        // Wait for slot to be available
+        await semaphore[currentIndex];
+
+        // Process tab and update semaphore
+        semaphore[currentIndex] = processTab(tabId);
+        return semaphore[currentIndex];
+    });
+
+    // Wait for all operations to complete
+    await Promise.allSettled(tabPromises);
+
+    const duration = Date.now() - startTime;
+    Logger.log(`${operationName} batch completed: ${success} successful, ${skipped} skipped, ${errors} errors in ${duration}ms`, Logger.LogComponent.SUSPENSION);
+
+    return { success, skipped, errors, duration };
 }
 
 // --- Bulk Operations ---
@@ -309,8 +332,13 @@ export async function suspendAllTabsInWindow(windowId, isManual = false) {
         const tabsInWindow = await chrome.tabs.query({ windowId, url: ['http://*/*', 'https://*/*'] });
         Logger.log(`${context}: Found ${tabsInWindow.length} tabs in window.`);
         const tabIds = tabsInWindow.filter(tab => tab.id && tab.url).map(tab => tab.id);
-        const { success, skipped } = await processTabsWithConcurrency(tabIds, (tabId) => suspendTab(tabId, isManual), 5);
-        Logger.log(`${context}: Suspended ${success} tabs, skipped ${skipped} tabs.`);
+        const results = await processTabsWithConcurrency(
+            tabIds,
+            (tabId) => suspendTab(tabId, isManual),
+            5,
+            `SuspendWindow${windowId}`
+        );
+        Logger.log(`${context}: Suspended ${results.success} tabs, skipped ${results.skipped} tabs, ${results.errors} errors.`);
     } catch (error) {
         Logger.logError(context, error);
     }
@@ -332,8 +360,13 @@ export async function unsuspendAllTabsInWindow(windowId) {
         const tabsInWindow = await chrome.tabs.query({ windowId, url: suspendedUrlPattern });
         Logger.log(`${context}: Found ${tabsInWindow.length} suspended tabs in window.`);
         const tabIds = tabsInWindow.filter(tab => tab.id).map(tab => tab.id);
-        const { success, skipped } = await processTabsWithConcurrency(tabIds, unsuspendTab, 5);
-        Logger.log(`${context}: Unsuspended ${success} tabs, skipped ${skipped} tabs.`);
+        const results = await processTabsWithConcurrency(
+            tabIds,
+            unsuspendTab,
+            5,
+            `UnsuspendWindow${windowId}`
+        );
+        Logger.log(`${context}: Unsuspended ${results.success} tabs, skipped ${results.skipped} tabs, ${results.errors} errors.`);
     } catch (error) {
         Logger.logError(context, error);
     }

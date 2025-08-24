@@ -177,6 +177,94 @@ async function captureCurrentSession() {
 }
 
 /**
+ * Create tabs in batches with controlled concurrency for better performance
+ * @param {number} windowId - Window ID to create tabs in
+ * @param {Array} tabsData - Array of tab data to create
+ * @param {boolean} restoreSuspended - Whether to restore suspended tabs in suspended state
+ * @returns {Promise<void>}
+ */
+async function createTabsBatch(windowId, tabsData, restoreSuspended) {
+    const batchSize = 15; // Reasonable batch size for tab creation
+    const maxConcurrency = 8; // Limit concurrent tab creations
+    const interBatchDelay = 100; // Short delay between batches
+
+    const startTime = Date.now();
+    let created = 0;
+    let errors = 0;
+
+    const perfId = `create_tabs_batch_${windowId}_${Date.now()}`;
+
+    for (let i = 0; i < tabsData.length; i += batchSize) {
+        const batch = tabsData.slice(i, i + batchSize);
+
+        // Create semaphore for controlled concurrency
+        const semaphore = new Array(maxConcurrency).fill(null).map(() => Promise.resolve());
+        let semaphoreIndex = 0;
+
+        const createTab = async (tabData, index) => {
+            // Determine URL for the tab
+            let tabUrl;
+            if (tabData.isSuspended) {
+                if (restoreSuspended && tabData.url) {
+                    tabUrl = tabData.url;
+                } else if (tabData.originalUrl) {
+                    tabUrl = tabData.originalUrl;
+                } else {
+                    tabUrl = tabData.url;
+                }
+            } else {
+                tabUrl = tabData.url;
+            }
+
+            try {
+                const tab = await chrome.tabs.create({
+                    windowId: windowId,
+                    url: tabUrl,
+                    active: false,
+                    pinned: tabData.pinned || false
+                });
+
+                created++;
+                Logger.detailedLog(`Created tab ${tab.id} in window ${windowId}`, Logger.LogComponent.GENERAL);
+            } catch (error) {
+                errors++;
+                Logger.logError(`Error creating tab at index ${i + index + 1}`, error, Logger.LogComponent.GENERAL);
+            }
+        };
+
+        // Process batch with controlled concurrency
+        const batchPromises = batch.map(async (tabData, index) => {
+            // Get next available semaphore slot
+            const currentIndex = semaphoreIndex;
+            semaphoreIndex = (semaphoreIndex + 1) % maxConcurrency;
+
+            await semaphore[currentIndex];
+            semaphore[currentIndex] = createTab(tabData, index);
+            return semaphore[currentIndex];
+        });
+
+        // Wait for batch to complete
+        await Promise.allSettled(batchPromises);
+
+        // Inter-batch delay to prevent overwhelming the system
+        if (i + batchSize < tabsData.length) {
+            await new Promise(resolve => setTimeout(resolve, interBatchDelay));
+        }
+
+        // Progress logging for large sessions
+        if (tabsData.length > 20) {
+            const progress = Math.round(((i + batch.length) / tabsData.length) * 100);
+            Logger.log(`Tab creation progress: ${progress}% (${created} created, ${errors} errors)`, Logger.LogComponent.GENERAL);
+        }
+    }
+
+    const duration = Date.now() - startTime;
+    Logger.log(`Batch tab creation completed: ${created} created, ${errors} errors in ${duration}ms`, Logger.LogComponent.GENERAL);
+
+
+}
+
+/**
  * Generate a session name
  * @param {boolean} isAutoSave 
  * @returns {string}
@@ -310,39 +398,10 @@ async function restoreWindow(windowData, restoreSuspended) {
             }
         }
 
-        // Create remaining tabs
-        for (let i = 1; i < windowData.tabs.length; i++) {
-            const tabData = windowData.tabs[i];
-
-            // Determine URL for additional tabs
-            let tabUrl;
-            if (tabData.isSuspended) {
-                if (restoreSuspended && tabData.url) {
-                    // Keep suspended state
-                    tabUrl = tabData.url;
-                } else if (tabData.originalUrl) {
-                    // Restore to original URL
-                    tabUrl = tabData.originalUrl;
-                } else {
-                    // Fallback
-                    tabUrl = tabData.url;
-                }
-            } else {
-                tabUrl = tabData.url;
-            }
-
-            try {
-                const tab = await chrome.tabs.create({
-                    windowId: window.id,
-                    url: tabUrl,
-                    active: false,
-                    pinned: tabData.pinned || false
-                });
-
-                Logger.detailedLog(`Created tab ${tab.id} in window ${window.id}`, Logger.LogComponent.GENERAL);
-            } catch (error) {
-                Logger.logError(`Error creating tab ${i}`, error, Logger.LogComponent.GENERAL);
-            }
+        // Create remaining tabs with optimized batch processing
+        const remainingTabs = windowData.tabs.slice(1);
+        if (remainingTabs.length > 0) {
+            await createTabsBatch(window.id, remainingTabs, restoreSuspended);
         }
 
         Logger.log(`Successfully restored window with ${windowData.tabs.length} tabs`, Logger.LogComponent.GENERAL);
