@@ -14,13 +14,13 @@ export function buildSuspendedUrl(tab) {
 
     // Add encoded parameters first
     if (tab.title) params.set("title", tab.title);
-    params.set("timestamp", Date.now());
 
     // Build the hash with original URL at the end as clear text (not encoded)
     let hashString = params.toString();
-    hashString += `&url=${tab.url}`;
+    if (hashString.length > 0) hashString += "&";
+    hashString += `url=${tab.url}`;
 
     urlObj.hash = hashString;
     Logger.detailedLog(`[TheOneSuspender] Built suspended URL with hash for tab ${tab.id}: ${urlObj.toString()}`);
     return urlObj.toString();
-} 
+}
