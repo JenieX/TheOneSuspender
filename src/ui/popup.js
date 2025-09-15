@@ -347,18 +347,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 				const tabIds = tabs.map(tab => tab.id);
 				if (suspendSelectedBtn) {
 					suspendSelectedBtn.onclick = async function () {
-						for (const tabId of tabIds) {
-							await chrome.runtime.sendMessage({ type: Const.MSG_SUSPEND_TAB, tabId, isManual: true });
+						try {
+							await chrome.runtime.sendMessage({ type: Const.MSG_SUSPEND_SELECTED_TABS, tabIds });
+							showFeedback("Suspending selected tabs...");
+						} catch (e) {
+							showError("Failed to start suspending selected tabs");
 						}
-						showFeedback("Suspending selected tabs...");
 					};
 				}
 				if (unsuspendSelectedBtn) {
 					unsuspendSelectedBtn.onclick = async function () {
-						for (const tabId of tabIds) {
-							await chrome.runtime.sendMessage({ type: Const.MSG_UNSUSPEND_TAB, tabId });
+						try {
+							await chrome.runtime.sendMessage({ type: Const.MSG_UNSUSPEND_SELECTED_TABS, tabIds });
+							showFeedback("Unsuspending selected tabs...");
+						} catch (e) {
+							showError("Failed to start unsuspending selected tabs");
 						}
-						showFeedback("Unsuspending selected tabs...");
 					};
 				}
 			}

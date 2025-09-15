@@ -323,6 +323,58 @@ function handleMessage(request, sender, sendResponse) {
             }, sendResponse);
             return true;
 
+        case Const.MSG_SUSPEND_SELECTED_TABS:
+            if (!validateMessageSender(sender, true)) {
+                sendResponse({ error: "Permission denied" });
+                Logger.logError(context, `Unauthorized attempt to call ${request.type} from ${JSON.stringify(sender)}`, Logger.LogComponent.BACKGROUND);
+                return false;
+            }
+            if (!Array.isArray(request.tabIds) || request.tabIds.length === 0) {
+                sendResponse({ error: "No tabIds provided" });
+                return false;
+            }
+            handleAsyncMessage(Const.MSG_SUSPEND_SELECTED_TABS, async () => {
+                let success = 0, skipped = 0, errors = 0;
+                const ids = request.tabIds.filter(id => typeof id === 'number');
+                for (const id of ids) {
+                    try {
+                        const ok = await Suspension.suspendTab(id, true);
+                        if (ok) success++; else skipped++;
+                    } catch (e) {
+                        errors++;
+                        Logger.logError(`Suspend selected failed for ${id}`, e, Logger.LogComponent.BACKGROUND);
+                    }
+                }
+                return { success: true, counts: { success, skipped, errors, total: ids.length } };
+            }, sendResponse);
+            return true;
+
+        case Const.MSG_UNSUSPEND_SELECTED_TABS:
+            if (!validateMessageSender(sender, true)) {
+                sendResponse({ error: "Permission denied" });
+                Logger.logError(context, `Unauthorized attempt to call ${request.type} from ${JSON.stringify(sender)}`, Logger.LogComponent.BACKGROUND);
+                return false;
+            }
+            if (!Array.isArray(request.tabIds) || request.tabIds.length === 0) {
+                sendResponse({ error: "No tabIds provided" });
+                return false;
+            }
+            handleAsyncMessage(Const.MSG_UNSUSPEND_SELECTED_TABS, async () => {
+                let success = 0, skipped = 0, errors = 0;
+                const ids = request.tabIds.filter(id => typeof id === 'number');
+                for (const id of ids) {
+                    try {
+                        const ok = await Suspension.unsuspendTab(id);
+                        if (ok) success++; else skipped++;
+                    } catch (e) {
+                        errors++;
+                        Logger.logError(`Unsuspend selected failed for ${id}`, e, Logger.LogComponent.BACKGROUND);
+                    }
+                }
+                return { success: true, counts: { success, skipped, errors, total: ids.length } };
+            }, sendResponse);
+            return true;
+
         default:
             // Utility/admin messages for Tools
             if (request.type === Const.MSG_CLEAR_FAVICON_CACHE) {
