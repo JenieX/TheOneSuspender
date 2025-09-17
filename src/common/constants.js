@@ -34,3 +34,10 @@ export const MSG_GET_EXTENSION_STATS = 'MSG_getExtensionStats';
 export const MSG_FAVICON_REFRESH_PROGRESS = 'MSG_faviconRefreshProgress';
 export const MSG_FAVICON_REFRESH_DONE = 'MSG_faviconRefreshDone';
 export const MSG_GET_SKIPPED_TABS = 'MSG_getSkippedTabs';
+export const MSG_RESET_BULK_OP_RUNNING = 'MSG_resetBulkOpRunning';
+
+// Storage Keys for chrome.storage.local
+export const STORAGE_KEYS = {
+    BULK_RUNNING: 'TS_isBulkRunning_v1',
+    FAVICON_REFRESH_RUNNING: 'TS_isFavRefreshRunning_v1'
+};

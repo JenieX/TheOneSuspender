@@ -11,15 +11,7 @@ import * as Scheduling from './scheduling.js';
 
 // ===================== Constants and Global State =====================
 
-// Ensure global lock is available
-if (typeof globalThis.isBulkOpRunning === 'undefined') {
-    globalThis.isBulkOpRunning = false;
-}
-
-// Global state for favicon refresh
-if (typeof globalThis.isFaviconRefreshRunning === 'undefined') {
-    globalThis.isFaviconRefreshRunning = false;
-}
+// Global state initialization removed - now using State module
 
 // Helper: broadcast favicon refresh progress
 function broadcastFaviconRefreshProgress(isRunning) {
@@ -123,8 +115,12 @@ function handleMessage(request, sender, sendResponse) {
 
     // Handle IS_BULK_OP_RUNNING directly (always available)
     if (request.type === 'IS_BULK_OP_RUNNING') {
-        sendResponse({ running: globalThis.isBulkOpRunning });
-        return false;
+        // Use storage-backed flag to survive service worker restarts
+        handleAsyncMessage('IS_BULK_OP_RUNNING', async () => {
+            const running = await State.getBulkOpRunning();
+            return { running };
+        }, sendResponse);
+        return true;
     }
 
     const context = `handleMessage(${request.type})`;
@@ -390,17 +386,22 @@ function handleMessage(request, sender, sendResponse) {
             }
             if (request.type === Const.MSG_REFRESH_ALL_SUSPENDED_FAVICONS) {
                 handleAsyncMessage(context, async () => {
-                    if (globalThis.isFaviconRefreshRunning) {
+                    // Use storage-backed flag to persist across worker sleep
+                    const running = await State.getFaviconRefreshRunning();
+                    if (running) {
                         return { success: false, error: 'Favicon refresh already running' };
                     }
-                    globalThis.isFaviconRefreshRunning = true;
-                    broadcastFaviconRefreshProgress(true);
-                    const suspendedPrefix = chrome.runtime.getURL(Const.SUSPENDED_PAGE_PATH);
-                    const tabs = await chrome.tabs.query({ url: suspendedPrefix + '*' });
-                    const count = await reloadSuspendedTabsBatched(tabs);
-                    globalThis.isFaviconRefreshRunning = false;
-                    broadcastFaviconRefreshProgress(false);
-                    return { success: true, count, total: tabs.length };
+                    await State.setFaviconRefreshRunning(true);
+                    try {
+                        broadcastFaviconRefreshProgress(true);
+                        const suspendedPrefix = chrome.runtime.getURL(Const.SUSPENDED_PAGE_PATH);
+                        const tabs = await chrome.tabs.query({ url: suspendedPrefix + '*' });
+                        const count = await reloadSuspendedTabsBatched(tabs);
+                        return { success: true, count, total: tabs.length };
+                    } finally {
+                        await State.setFaviconRefreshRunning(false);
+                        broadcastFaviconRefreshProgress(false);
+                    }
                 }, sendResponse);
                 return true;
             }
@@ -450,6 +451,14 @@ function handleMessage(request, sender, sendResponse) {
                         }
                     }
                     return { success: true, skippedTabs };
+                }, sendResponse);
+                return true;
+            }
+            if (request.type === Const.MSG_RESET_BULK_OP_RUNNING) {
+                handleAsyncMessage(context, async () => {
+                    Logger.log('Manual reset of BulkOpRunning requested', Logger.LogComponent.BACKGROUND);
+                    await State.setBulkOpRunning(false);
+                    return { success: true };
                 }, sendResponse);
                 return true;
             }

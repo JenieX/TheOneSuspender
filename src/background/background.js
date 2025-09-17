@@ -56,6 +56,8 @@ async function initialize() {
         // Schedule existing tabs (will respect restored per-tab times)
         if (Prefs.prefs.autoSuspendEnabled) {
             Logger.log("Scheduling existing tabs...", Logger.LogComponent.BACKGROUND);
+            // Small delay to ensure all browser state is fully initialized
+            await new Promise(resolve => setTimeout(resolve, 3000));
             const scheduleResult = await Scheduling.scheduleAllTabs();
             if (scheduleResult && typeof scheduleResult === 'object') {
                 Logger.log(`Tab scheduling complete - ${scheduleResult.success} scheduled, ${scheduleResult.skipped} skipped, ${scheduleResult.failed} failed out of ${scheduleResult.total} total tabs`, Logger.LogComponent.BACKGROUND);
@@ -127,7 +129,12 @@ chrome.runtime.onInstalled.addListener(async (details) => {
 // Handle browser startup
 chrome.runtime.onStartup.addListener(async () => {
     Logger.log("Browser startup detected", Logger.LogComponent.BACKGROUND);
-    globalThis.isBulkOpRunning = false;
+    try {
+        // Ensure persisted bulk flag is reset if a previous run crashed mid-op
+        await State.setBulkOpRunning(false);
+    } catch (e) {
+        Logger.logError('Failed to reset bulk op flag on startup', e, Logger.LogComponent.BACKGROUND);
+    }
 });
 
 // Set up message handler immediately

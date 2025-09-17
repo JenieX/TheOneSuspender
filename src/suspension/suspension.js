@@ -5,6 +5,7 @@ import * as TabClassifier from '../common/tab-classifier.js';
 import * as ExistenceUtils from '../common/existence-utils.js';
 import * as Const from '../common/constants.js'
 import * as FaviconUtils from '../common/favicon-utils.js';
+import * as State from '../common/state.js';
 
 import * as SuspendClose from './suspend-close.js';
 import * as SuspendPreserve from './suspend-preserve.js';
@@ -385,7 +386,8 @@ export async function suspendAllTabsAllSpecs(isManual = false) {
         Logger.log(`${context}: No windows found, skipping.`);
         return;
     }
-    globalThis.isBulkOpRunning = true;
+    // Mark bulk op running (persisted) so UI can reflect and worker sleep won't lose it
+    await State.setBulkOpRunning(true);
     try {
         for (const window of allWindows) {
             try {
@@ -399,7 +401,7 @@ export async function suspendAllTabsAllSpecs(isManual = false) {
     } catch (error) {
         Logger.logError(context, error);
     } finally {
-        globalThis.isBulkOpRunning = false;
+        await State.setBulkOpRunning(false);
     }
 }
 
@@ -415,7 +417,8 @@ export async function unsuspendAllTabsAllSpecs() {
         Logger.log(`${context}: No windows found, skipping.`);
         return;
     }
-    globalThis.isBulkOpRunning = true;
+    // Mark bulk op running (persisted)
+    await State.setBulkOpRunning(true);
     try {
         for (const window of allWindows) {
             try {
@@ -429,7 +432,7 @@ export async function unsuspendAllTabsAllSpecs() {
     } catch (error) {
         Logger.logError(context, error);
     } finally {
-        globalThis.isBulkOpRunning = false;
+        await State.setBulkOpRunning(false);
     }
 }
 

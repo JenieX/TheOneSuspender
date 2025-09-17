@@ -1,5 +1,10 @@
 // state.js - Shared state between background and listeners modules
 import * as Logger from './logger.js';
+import { STORAGE_KEYS } from './constants.js';
+
+// Timeout for bulk operations (10 minutes)
+const BULK_OP_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+let bulkOpTimeoutId = null;
 
 // Browser status trackers
 let isOfflineMode = !navigator.onLine; // Initialize with current status
@@ -132,4 +137,92 @@ export async function cleanupStateReferences() {
     } catch (e) {
         Logger.logError("Error during state cleanup:", e, Logger.LogComponent.BACKGROUND);
     }
-} 
+}
+
+// ===================== Persisted runtime flags =====================
+// Keys for chrome.storage.local to persist long-lived runtime flags.
+// Storage keys are now imported from constants.js
+
+/**
+ * Get whether a bulk operation is currently marked as running.
+ * Returns false when not set.
+ */
+export async function getBulkOpRunning() {
+    try {
+        const obj = await chrome.storage.local.get(STORAGE_KEYS.BULK_RUNNING);
+        return !!obj[STORAGE_KEYS.BULK_RUNNING];
+    } catch (e) {
+        Logger.logError('getBulkOpRunning failed', e, Logger.LogComponent.BACKGROUND);
+        return false;
+    }
+}
+
+/**
+ * Persist the bulk operation running flag.
+ * @param {boolean} value
+ */
+export async function setBulkOpRunning(value) {
+    try {
+        // Clear any existing timeout
+        if (bulkOpTimeoutId) {
+            clearTimeout(bulkOpTimeoutId);
+            bulkOpTimeoutId = null;
+        }
+
+        await chrome.storage.local.set({ [STORAGE_KEYS.BULK_RUNNING]: !!value });
+
+        // If setting to true, start a timeout to automatically reset after 10 minutes
+        if (value) {
+            bulkOpTimeoutId = setTimeout(async () => {
+                Logger.log('Bulk operation timeout reached (10 minutes), automatically resetting BulkOpRunning to false', Logger.LogComponent.BACKGROUND);
+                try {
+                    await chrome.storage.local.set({ [STORAGE_KEYS.BULK_RUNNING]: false });
+                    bulkOpTimeoutId = null;
+                    
+                    // Send message to notify UI that bulk operation was reset due to timeout
+                    try {
+                        await chrome.runtime.sendMessage({ 
+                            type: 'MSG_resetBulkOpRunning',
+                            reason: 'timeout'
+                        });
+                    } catch (msgError) {
+                        // Ignore message errors (e.g., no listeners)
+                        Logger.detailedLog('Could not send bulk op timeout message (no listeners)', Logger.LogComponent.BACKGROUND);
+                    }
+                } catch (e) {
+                    Logger.logError('Failed to reset BulkOpRunning on timeout', e, Logger.LogComponent.BACKGROUND);
+                }
+            }, BULK_OP_TIMEOUT_MS);
+            
+            Logger.log(`Bulk operation started with 10-minute timeout`, Logger.LogComponent.BACKGROUND);
+        }
+    } catch (e) {
+        Logger.logError('setBulkOpRunning failed', e, Logger.LogComponent.BACKGROUND);
+    }
+}
+
+/**
+ * Get whether favicon refresh is currently running.
+ * Returns false when not set.
+ */
+export async function getFaviconRefreshRunning() {
+    try {
+        const obj = await chrome.storage.local.get(STORAGE_KEYS.FAVICON_REFRESH_RUNNING);
+        return !!obj[STORAGE_KEYS.FAVICON_REFRESH_RUNNING];
+    } catch (e) {
+        Logger.logError('getFaviconRefreshRunning failed', e, Logger.LogComponent.BACKGROUND);
+        return false;
+    }
+}
+
+/**
+ * Persist the favicon refresh running flag.
+ * @param {boolean} value
+ */
+export async function setFaviconRefreshRunning(value) {
+    try {
+        await chrome.storage.local.set({ [STORAGE_KEYS.FAVICON_REFRESH_RUNNING]: !!value });
+    } catch (e) {
+        Logger.logError('setFaviconRefreshRunning failed', e, Logger.LogComponent.BACKGROUND);
+    }
+}
