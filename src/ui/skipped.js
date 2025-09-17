@@ -1,7 +1,10 @@
 // skipped.js
 import * as Const from '../common/constants.js';
+import * as Theme from '../common/theme.js';
 
 document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize theme using common method
+    await Theme.initializeThemeForPage();
     const skippedList = document.getElementById('skipped-list');
     const specialUrlSection = document.getElementById('special-url-section');
     const specialUrlList = document.getElementById('special-url-list');
