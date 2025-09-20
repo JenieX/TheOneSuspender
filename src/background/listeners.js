@@ -767,68 +767,120 @@ export function handleStartup() {
 }
 
 export function handleCommand(command) {
-    Logger.log(`Keyboard command received: ${command}`, Logger.LogComponent.BACKGROUND);
+    // Enhanced logging for keyboard shortcut debugging
+    const timestamp = new Date().toISOString();
+    Logger.log(`[KEYBOARD] Command received at ${timestamp}: "${command}"`, Logger.LogComponent.BACKGROUND);
+
+    // Log current browser state for debugging
+    Logger.detailedLog(`[KEYBOARD] Browser state - Extension active: ${chrome.runtime?.id ? 'YES' : 'NO'}`, Logger.LogComponent.BACKGROUND);
 
     Logger.withErrorHandling(
         `handleCommand(${command})`,
         async () => {
             try {
-                // Get the current active tab
+                // Get the current active tab with detailed logging
+                Logger.detailedLog(`[KEYBOARD] Querying for active tab in current window...`, Logger.LogComponent.BACKGROUND);
                 const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
                 const activeTab = activeTabs[0];
 
+                if (!activeTab) {
+                    Logger.logWarning(`[KEYBOARD] No active tab found for command: ${command}`, Logger.LogComponent.BACKGROUND);
+                    return;
+                }
+
+                Logger.detailedLog(`[KEYBOARD] Active tab found - ID: ${activeTab.id}, URL: ${activeTab.url}, Title: "${activeTab.title}"`, Logger.LogComponent.BACKGROUND);
+
                 switch (command) {
                     case 'suspend-current-tab':
+                        Logger.log(`[KEYBOARD] Processing suspend-current-tab command for tab ${activeTab.id}`, Logger.LogComponent.BACKGROUND);
                         if (activeTab && activeTab.id) {
-                            await Suspension.suspendTab(activeTab.id, true);
+                            Logger.detailedLog(`[KEYBOARD] Calling Suspension.suspendTab(${activeTab.id}, true)...`, Logger.LogComponent.BACKGROUND);
+                            const suspendResult = await Suspension.suspendTab(activeTab.id, true);
+                            Logger.log(`[KEYBOARD] Suspend result for tab ${activeTab.id}: ${suspendResult ? 'SUCCESS' : 'FAILED/SKIPPED'}`, Logger.LogComponent.BACKGROUND);
                             Logger.log(`Suspended current tab ${activeTab.id} via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
+                        } else {
+                            Logger.logWarning(`[KEYBOARD] Cannot suspend - invalid tab data: ${JSON.stringify(activeTab)}`, Logger.LogComponent.BACKGROUND);
                         }
                         break;
 
                     case 'unsuspend-current-tab':
+                        Logger.log(`[KEYBOARD] Processing unsuspend-current-tab command for tab ${activeTab.id}`, Logger.LogComponent.BACKGROUND);
                         if (activeTab && activeTab.id) {
-                            await Suspension.unsuspendTab(activeTab.id);
+                            Logger.detailedLog(`[KEYBOARD] Calling Suspension.unsuspendTab(${activeTab.id})...`, Logger.LogComponent.BACKGROUND);
+                            const unsuspendResult = await Suspension.unsuspendTab(activeTab.id);
+                            Logger.log(`[KEYBOARD] Unsuspend result for tab ${activeTab.id}: ${unsuspendResult ? 'SUCCESS' : 'FAILED/SKIPPED'}`, Logger.LogComponent.BACKGROUND);
                             Logger.log(`Unsuspended current tab ${activeTab.id} via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
+                        } else {
+                            Logger.logWarning(`[KEYBOARD] Cannot unsuspend - invalid tab data: ${JSON.stringify(activeTab)}`, Logger.LogComponent.BACKGROUND);
                         }
                         break;
 
                     case 'suspend-all-window':
+                        Logger.log(`[KEYBOARD] Processing suspend-all-window command for window ${activeTab.windowId}`, Logger.LogComponent.BACKGROUND);
                         if (activeTab && activeTab.windowId) {
-                            await Suspension.suspendAllTabsInWindow(activeTab.windowId, true);
+                            Logger.detailedLog(`[KEYBOARD] Calling Suspension.suspendAllTabsInWindow(${activeTab.windowId}, true)...`, Logger.LogComponent.BACKGROUND);
+                            const suspendAllResult = await Suspension.suspendAllTabsInWindow(activeTab.windowId, true);
+                            Logger.log(`[KEYBOARD] Suspend all window result: ${JSON.stringify(suspendAllResult)}`, Logger.LogComponent.BACKGROUND);
                             Logger.log(`Suspended all tabs in window ${activeTab.windowId} via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
+                        } else {
+                            Logger.logWarning(`[KEYBOARD] Cannot suspend all in window - invalid window data: ${JSON.stringify(activeTab)}`, Logger.LogComponent.BACKGROUND);
                         }
                         break;
 
                     case 'unsuspend-all-window':
+                        Logger.log(`[KEYBOARD] Processing unsuspend-all-window command for window ${activeTab.windowId}`, Logger.LogComponent.BACKGROUND);
                         if (activeTab && activeTab.windowId) {
-                            await Suspension.unsuspendAllTabsInWindow(activeTab.windowId);
+                            Logger.detailedLog(`[KEYBOARD] Calling Suspension.unsuspendAllTabsInWindow(${activeTab.windowId})...`, Logger.LogComponent.BACKGROUND);
+                            const unsuspendAllResult = await Suspension.unsuspendAllTabsInWindow(activeTab.windowId);
+                            Logger.log(`[KEYBOARD] Unsuspend all window result: ${JSON.stringify(unsuspendAllResult)}`, Logger.LogComponent.BACKGROUND);
                             Logger.log(`Unsuspended all tabs in window ${activeTab.windowId} via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
+                        } else {
+                            Logger.logWarning(`[KEYBOARD] Cannot unsuspend all in window - invalid window data: ${JSON.stringify(activeTab)}`, Logger.LogComponent.BACKGROUND);
                         }
                         break;
 
                     case 'suspend-all-tabs':
-                        await Suspension.suspendAllTabsAllSpecs(true);
+                        Logger.log(`[KEYBOARD] Processing suspend-all-tabs command for all windows`, Logger.LogComponent.BACKGROUND);
+                        Logger.detailedLog(`[KEYBOARD] Calling Suspension.suspendAllTabsAllSpecs(true)...`, Logger.LogComponent.BACKGROUND);
+                        const suspendAllTabsResult = await Suspension.suspendAllTabsAllSpecs(true);
+                        Logger.log(`[KEYBOARD] Suspend all tabs result: ${JSON.stringify(suspendAllTabsResult)}`, Logger.LogComponent.BACKGROUND);
                         Logger.log(`Suspended all tabs in all windows via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
                         break;
 
                     case 'unsuspend-all-tabs':
-                        await Suspension.unsuspendAllTabsAllSpecs();
+                        Logger.log(`[KEYBOARD] Processing unsuspend-all-tabs command for all windows`, Logger.LogComponent.BACKGROUND);
+                        Logger.detailedLog(`[KEYBOARD] Calling Suspension.unsuspendAllTabsAllSpecs()...`, Logger.LogComponent.BACKGROUND);
+                        const unsuspendAllTabsResult = await Suspension.unsuspendAllTabsAllSpecs();
+                        Logger.log(`[KEYBOARD] Unsuspend all tabs result: ${JSON.stringify(unsuspendAllTabsResult)}`, Logger.LogComponent.BACKGROUND);
                         Logger.log(`Unsuspended all tabs in all windows via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
                         break;
 
                     case 'open-settings':
-                        await chrome.tabs.create({
+                        Logger.log(`[KEYBOARD] Processing open-settings command`, Logger.LogComponent.BACKGROUND);
+                        Logger.detailedLog(`[KEYBOARD] Creating new tab with options.html...`, Logger.LogComponent.BACKGROUND);
+                        const settingsTab = await chrome.tabs.create({
                             url: chrome.runtime.getURL('options.html')
                         });
+                        Logger.log(`[KEYBOARD] Settings tab created with ID: ${settingsTab.id}`, Logger.LogComponent.BACKGROUND);
                         Logger.log(`Opened settings page via keyboard shortcut`, Logger.LogComponent.BACKGROUND);
                         break;
 
                     default:
+                        Logger.logWarning(`[KEYBOARD] Unknown/unhandled command received: "${command}"`, Logger.LogComponent.BACKGROUND);
                         Logger.log(`Unknown command: ${command}`, Logger.LogComponent.BACKGROUND);
                         break;
                 }
             } catch (error) {
-                Logger.logError(`Error executing command ${command}`, error, Logger.LogComponent.BACKGROUND);
+                Logger.logError(`[KEYBOARD] Critical error executing command "${command}"`, error, Logger.LogComponent.BACKGROUND);
+                Logger.detailedLog(`[KEYBOARD] Error details - Name: ${error.name}, Message: ${error.message}, Stack: ${error.stack}`, Logger.LogComponent.BACKGROUND);
+
+                // Log additional context for debugging
+                try {
+                    const currentTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+                    Logger.detailedLog(`[KEYBOARD] Error context - Current tabs: ${JSON.stringify(currentTabs)}`, Logger.LogComponent.BACKGROUND);
+                } catch (contextError) {
+                    Logger.logError(`[KEYBOARD] Failed to get error context`, contextError, Logger.LogComponent.BACKGROUND);
+                }
             }
         }
     );
@@ -855,7 +907,22 @@ export function initListeners() {
     chrome.tabs.onRemoved.addListener(handleTabRemoved);
     chrome.tabs.onActivated.addListener(handleTabActivated);
     chrome.windows.onFocusChanged.addListener(handleWindowFocusChanged);
+
+    // Special attention to command listener setup
+    Logger.log("[KEYBOARD] Setting up chrome.commands.onCommand listener for keyboard shortcuts...", Logger.LogComponent.BACKGROUND);
     chrome.commands.onCommand.addListener(handleCommand);
+    Logger.log("[KEYBOARD] Command listener successfully attached to handleCommand function", Logger.LogComponent.BACKGROUND);
+
+    // Verify command listener is working by checking available commands (async)
+    chrome.commands.getAll().then(commands => {
+        Logger.log(`[KEYBOARD] Available keyboard commands: ${commands.length} total`, Logger.LogComponent.BACKGROUND);
+        commands.forEach(cmd => {
+            const shortcut = cmd.shortcut || 'Not assigned';
+            Logger.detailedLog(`[KEYBOARD] Command: "${cmd.name}" - Shortcut: "${shortcut}" - Description: "${cmd.description}"`, Logger.LogComponent.BACKGROUND);
+        });
+    }).catch(commandError => {
+        Logger.logError("[KEYBOARD] Failed to retrieve available commands", commandError, Logger.LogComponent.BACKGROUND);
+    });
 
     Logger.log("All event listeners initialized (message handler was set up earlier in background.js)", Logger.LogComponent.BACKGROUND);
 }
